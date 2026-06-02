@@ -66,7 +66,7 @@ except Exception:  # Allows import of RSS/DB helpers without PTB installed.
 
     ContextTypes = _ContextTypesFallback()  # type: ignore[assignment]
 
-load_dotenv()
+load_dotenv(dotenv_path=Path(".env"))
 
 APP_NAME = "codex_quota_radar_tgbot"
 APP_TITLE = "Codex Quota Radar Telegram Bot"
@@ -136,7 +136,7 @@ RADAR_FEED_URL = _env_str("RADAR_FEED_URL", DEFAULT_RADAR_FEED_URL)
 RADAR_CHECK_INTERVAL_MINUTES = _env_int("RADAR_CHECK_INTERVAL_MINUTES", 3, minimum=1)
 RADAR_BOOTSTRAP_SILENT = _env_bool("RADAR_BOOTSTRAP_SILENT", True)
 CHART_MAX_POINTS = _env_int("CHART_MAX_POINTS", 300, minimum=2)
-RPC_TIMEOUT_SECONDS = _env_float("RPC_TIMEOUT_SECONDS", 20.0)
+RPC_TIMEOUT_SECONDS = _env_float("RPC_TIMEOUT_SECONDS", 60.0)
 TELEGRAM_PROXY = _env_str("TELEGRAM_PROXY", "")
 TELEGRAM_CONNECT_TIMEOUT = _env_float("TELEGRAM_CONNECT_TIMEOUT", 20.0)
 TELEGRAM_READ_TIMEOUT = _env_float("TELEGRAM_READ_TIMEOUT", 20.0)
@@ -620,7 +620,10 @@ async def _read_jsonrpc_response(proc: asyncio.subprocess.Process, target_id: in
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise CodexRPCError(f"等待 JSON-RPC id={target_id} 超时")
-        raw = await asyncio.wait_for(proc.stdout.readline(), timeout=remaining)
+        try:
+            raw = await asyncio.wait_for(proc.stdout.readline(), timeout=remaining)
+        except asyncio.TimeoutError as exc:
+            raise CodexRPCError(f"等待 JSON-RPC id={target_id} 响应超时（{timeout:.0f}s）") from exc
         if not raw:
             raise CodexRPCError(f"Codex app-server stdout 已关闭，未收到 id={target_id}")
         line = raw.decode("utf-8", errors="replace").strip()

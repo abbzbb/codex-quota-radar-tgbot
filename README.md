@@ -100,6 +100,11 @@ TELEGRAM_READ_TIMEOUT=20
 TELEGRAM_WRITE_TIMEOUT=20
 TELEGRAM_POOL_TIMEOUT=5
 CODEX_CMD=codex app-server --listen stdio://
+RPC_TIMEOUT_SECONDS=60
+HTTPS_PROXY=
+HTTP_PROXY=
+ALL_PROXY=
+NO_PROXY=localhost,127.0.0.1
 TIMEZONE=Asia/Shanghai
 CACHE_SECONDS=20
 DB_PATH=codex_quota_radar_bot.sqlite3
@@ -118,6 +123,8 @@ CHART_MAX_POINTS=300
 - `TELEGRAM_PROXY`：Telegram API 代理；网络无法直连 `api.telegram.org` 时可填 HTTP 代理，例如 `http://127.0.0.1:7890`。
 - `TELEGRAM_CONNECT_TIMEOUT` / `TELEGRAM_READ_TIMEOUT` / `TELEGRAM_WRITE_TIMEOUT` / `TELEGRAM_POOL_TIMEOUT`：Telegram API 连接/读写/连接池超时。
 - `CODEX_CMD`：Codex app-server 启动命令。
+- `RPC_TIMEOUT_SECONDS`：等待 Codex JSON-RPC 单个响应的超时时间；`account/rateLimits/read` 偶尔较慢时可调大。
+- `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY`：Codex CLI 访问 `chatgpt.com` 失败时使用的网络代理；Bot 启动后会让子进程继承这些环境变量。
 - `TIMEZONE`：用于显示重置时间和每日报告时间。
 - `CACHE_SECONDS`：`/quota` 缓存秒数，避免频繁启动 Codex app-server。
 - `DB_PATH`：SQLite 数据库路径。
@@ -292,6 +299,8 @@ CODEX_CMD=/home/you/.local/bin/codex app-server --listen stdio://
 
 ### 读取不到 rate limits
 
+- 如果错误是 `等待 JSON-RPC id=3 响应超时`，表示 `account/rateLimits/read` 没在超时时间内返回。可在 `.env` 调大 `RPC_TIMEOUT_SECONDS=90` 或 `120` 后重启。
+- 如果错误包含 `failed to fetch codex rate limits`、`chatgpt.com/backend-api/wham/usage` 或 `error sending request`，表示 Codex CLI/app-server 访问 ChatGPT 后端失败。请确认当前用户可访问 `chatgpt.com`，或在 `.env` 设置 `HTTPS_PROXY=http://127.0.0.1:7890`、`HTTP_PROXY=http://127.0.0.1:7890` 后重启。
 - 运行 `/health` 查看 Codex app-server 是否可调用。
 - 使用 `ENABLE_RAW=1` 后调用 `/raw` 查看非敏感 JSON 结构。
 - Codex app-server 返回结构可能变化，代码会优先读取 `rateLimitsByLimitId.codex`，再回退 `rateLimits`。
