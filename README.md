@@ -23,29 +23,6 @@
     └── codex-quota-radar-bot.service.example # systemd 服务示例
 ```
 
-
-## GitHub 发布前检查
-
-上传到 GitHub 前，请确认以下本地文件不会提交：
-
-- `.env`：包含 Telegram Bot Token 和 chat_id 配置。
-- `*.sqlite3`、`*.sqlite3-*`：运行时数据库、WAL/SHM 文件。
-- `.venv/`：本地虚拟环境。
-- `.omx/`：本地 Codex/OMX 工作流状态。
-- `__pycache__/`：Python 缓存。
-
-建议首次提交：
-
-```bash
-git init
-git add bot.py requirements.txt .env.example README.md .gitignore systemd/codex-quota-radar-bot.service.example
-git status
-git commit -m "Build Codex quota radar Telegram bot"
-git branch -M main
-git remote add origin https://github.com/<your-username>/codex-quota-radar-tgbot.git
-git push -u origin main
-```
-
 ## 安装
 
 要求 Python 3.10+。
