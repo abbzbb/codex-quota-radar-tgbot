@@ -1,0 +1,14 @@
+[Unit]
+Description=Codex Quota Radar Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/path/to/codex-quota-radar-tgbot
+ExecStart=/path/to/codex-quota-radar-tgbot/.venv/bin/python /path/to/codex-quota-radar-tgbot/bot.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
