@@ -21,6 +21,7 @@ import sqlite3
 import sys
 import time
 import urllib.request
+import warnings
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1078,6 +1079,49 @@ def chart_window_seconds(arg: str) -> Optional[int]:
     return {"24h": 86400, "1d": 86400, "7d": 7 * 86400, "30d": 30 * 86400}.get(arg)
 
 
+def configure_chart_fonts() -> Optional[Any]:
+    """Configure CJK fallback fonts while preserving Latin glyph coverage."""
+    if matplotlib is None:
+        return None
+    candidates = [
+        os.getenv("CHART_FONT_FILE", ""),
+        "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        "/usr/share/fonts/truetype/arphic/ukai.ttc",
+        "/usr/share/fonts/truetype/arphic/uming.ttc",
+    ]
+    cjk_name = ""
+    cjk_prop: Optional[Any] = None
+    for font_file in candidates:
+        if font_file and Path(font_file).exists():
+            try:
+                matplotlib.font_manager.fontManager.addfont(font_file)
+                cjk_prop = matplotlib.font_manager.FontProperties(fname=font_file)
+                cjk_name = cjk_prop.get_name()
+                break
+            except Exception as exc:
+                logger.warning("Chart font %s failed: %s", font_file, exc)
+    # Keep DejaVu first for Latin/numeric glyphs and use CJK font as fallback for Chinese.
+    families = ["DejaVu Sans"] + ([cjk_name] if cjk_name else [])
+    matplotlib.rcParams["font.family"] = families
+    matplotlib.rcParams["axes.unicode_minus"] = False
+    return cjk_prop
+
+
+def _format_chart_xticks(fig: Any, ax: Any, window_arg: str) -> None:
+    import matplotlib.dates as mdates
+
+    if window_arg in {"24h", "1d"}:
+        ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=4, maxticks=7))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M", tz=LOCAL_TZ))
+    else:
+        ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=4, maxticks=8))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d\n%H:%M", tz=LOCAL_TZ))
+    fig.autofmt_xdate(rotation=0, ha="center")
+
+
 async def chart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await allowed(update):
         return
@@ -1098,19 +1142,43 @@ async def chart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     xs = [datetime.fromtimestamp(int(r["ts"]), LOCAL_TZ) for r in rows]
     primary = [r.get("primary_remaining") for r in rows]
     secondary = [r.get("secondary_remaining") for r in rows]
-    fig, ax = plt.subplots(figsize=(8, 4.5))
-    ax.plot(xs, primary, marker="o", label="短周期剩余")
-    if any(v is not None for v in secondary):
-        ax.plot(xs, secondary, marker="o", label="长周期剩余")
-    ax.set_ylim(0, 100)
-    ax.set_ylabel("剩余百分比 (%)")
-    ax.set_title(f"Codex 额度趋势（{arg}）")
-    ax.grid(True, alpha=0.3)
-    ax.legend()
-    fig.autofmt_xdate()
-    buf = io.BytesIO()
-    fig.tight_layout()
-    fig.savefig(buf, format="png", dpi=150)
+    font_prop = configure_chart_fonts()
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Glyph .* missing from font")
+        fig, ax = plt.subplots(figsize=(9.5, 5.2), facecolor="#f8fafc")
+        ax.set_facecolor("#ffffff")
+        primary_color = "#2563eb"
+        secondary_color = "#16a34a"
+        ax.plot(xs, primary, marker="o", markersize=4.5, linewidth=2.4, color=primary_color, label="短周期剩余")
+        if any(v is not None for v in secondary):
+            ax.plot(xs, secondary, marker="o", markersize=4.5, linewidth=2.4, color=secondary_color, label="长周期剩余")
+        ax.axhspan(0, 20, color="#fee2e2", alpha=0.45, zorder=0)
+        ax.axhline(20, color="#ef4444", linewidth=1.1, linestyle="--", alpha=0.85, label="低额度参考线 20%")
+        ax.set_ylim(0, 100)
+        ax.set_ylabel("剩余百分比（%）")
+        ax.set_xlabel("查询时间")
+        ax.set_title(f"Codex 额度趋势（{arg}）", fontsize=15, pad=14, weight="bold")
+        ax.grid(True, axis="y", color="#cbd5e1", alpha=0.55, linewidth=0.8)
+        ax.grid(True, axis="x", color="#e2e8f0", alpha=0.35, linewidth=0.6)
+        for spine in ["top", "right"]:
+            ax.spines[spine].set_visible(False)
+        for spine in ["left", "bottom"]:
+            ax.spines[spine].set_color("#cbd5e1")
+        ax.legend(frameon=True, facecolor="#ffffff", edgecolor="#e2e8f0", framealpha=0.95)
+        _format_chart_xticks(fig, ax, arg)
+        ax.text(
+            0.99,
+            0.02,
+            f"数据点：{len(rows)} · 时区：{TIMEZONE_NAME}",
+            transform=ax.transAxes,
+            ha="right",
+            va="bottom",
+            fontsize=8.5,
+            color="#64748b",
+        )
+        buf = io.BytesIO()
+        fig.tight_layout(pad=1.4)
+        fig.savefig(buf, format="png", dpi=170, facecolor=fig.get_facecolor(), bbox_inches="tight")
     plt.close(fig)
     buf.seek(0)
     await update.message.reply_photo(photo=buf, caption=f"Codex 额度趋势（{arg}）")
