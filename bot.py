@@ -210,6 +210,25 @@ def percent_text(value: Optional[float]) -> str:
     return f"{value:.1f}%"
 
 
+def mask_email(email: Optional[str]) -> str:
+    """Mask an email address for Telegram-visible privacy."""
+    if not email:
+        return "未知"
+    email = str(email).strip()
+    if "@" not in email:
+        if len(email) <= 4:
+            return email[0] + "***" if email else "未知"
+        return email[:2] + "***" + email[-2:]
+    local, domain = email.split("@", 1)
+    if len(local) <= 2:
+        masked_local = local[:1] + "***"
+    elif len(local) <= 4:
+        masked_local = local[:1] + "***" + local[-1:]
+    else:
+        masked_local = local[:2] + "*****" + local[-2:]
+    return f"{masked_local}@{domain}"
+
+
 def split_text(text: str, limit: int = 3500) -> list[str]:
     if len(text) <= limit:
         return [text]
@@ -822,7 +841,7 @@ def format_quota(payload: dict[str, Any]) -> str:
     queried = datetime.fromtimestamp(int(payload.get("queried_at") or now_ts()), LOCAL_TZ)
     lines = [
         "📊 Codex 额度状态",
-        f"账号：{payload.get('account_email') or '未知'}",
+        f"账号：{mask_email(payload.get('account_email'))}",
         f"套餐：{payload.get('plan_type') or '未知'}",
         f"查询时间：{queried.strftime('%Y-%m-%d %H:%M:%S %Z')}",
         "",
@@ -915,7 +934,7 @@ async def health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     try:
         payload = await fetch_codex_payload(force=True)
         codex_ok = True
-        email = payload.get("account_email") or "未知"
+        email = mask_email(payload.get("account_email"))
         plan = payload.get("plan_type") or "未知"
         rate_ok = "是" if payload.get("primary") or payload.get("secondary") else "否"
     except Exception as exc:
