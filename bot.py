@@ -137,6 +137,11 @@ RADAR_CHECK_INTERVAL_MINUTES = _env_int("RADAR_CHECK_INTERVAL_MINUTES", 3, minim
 RADAR_BOOTSTRAP_SILENT = _env_bool("RADAR_BOOTSTRAP_SILENT", True)
 CHART_MAX_POINTS = _env_int("CHART_MAX_POINTS", 300, minimum=2)
 RPC_TIMEOUT_SECONDS = _env_float("RPC_TIMEOUT_SECONDS", 20.0)
+TELEGRAM_PROXY = _env_str("TELEGRAM_PROXY", "")
+TELEGRAM_CONNECT_TIMEOUT = _env_float("TELEGRAM_CONNECT_TIMEOUT", 20.0)
+TELEGRAM_READ_TIMEOUT = _env_float("TELEGRAM_READ_TIMEOUT", 20.0)
+TELEGRAM_WRITE_TIMEOUT = _env_float("TELEGRAM_WRITE_TIMEOUT", 20.0)
+TELEGRAM_POOL_TIMEOUT = _env_float("TELEGRAM_POOL_TIMEOUT", 5.0)
 
 
 def _parse_allowed_chat_ids(raw: str) -> set[int]:
@@ -1253,7 +1258,21 @@ def build_application() -> Application:
         raise RuntimeError("python-telegram-bot 未安装，请先安装 requirements.txt")
     if not TELEGRAM_BOT_TOKEN:
         raise RuntimeError("TELEGRAM_BOT_TOKEN 未配置")
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+    builder = (
+        ApplicationBuilder()
+        .token(TELEGRAM_BOT_TOKEN)
+        .connect_timeout(TELEGRAM_CONNECT_TIMEOUT)
+        .read_timeout(TELEGRAM_READ_TIMEOUT)
+        .write_timeout(TELEGRAM_WRITE_TIMEOUT)
+        .pool_timeout(TELEGRAM_POOL_TIMEOUT)
+        .get_updates_connect_timeout(TELEGRAM_CONNECT_TIMEOUT)
+        .get_updates_read_timeout(TELEGRAM_READ_TIMEOUT)
+        .get_updates_write_timeout(TELEGRAM_WRITE_TIMEOUT)
+        .get_updates_pool_timeout(TELEGRAM_POOL_TIMEOUT)
+    )
+    if TELEGRAM_PROXY:
+        builder = builder.proxy(TELEGRAM_PROXY).get_updates_proxy(TELEGRAM_PROXY)
+    app = builder.build()
     handlers = [
         ("start", start_cmd),
         ("help", help_cmd),

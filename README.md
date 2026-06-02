@@ -94,6 +94,11 @@ nano .env
 ```env
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
 ALLOWED_CHAT_IDS=123456789
+TELEGRAM_PROXY=
+TELEGRAM_CONNECT_TIMEOUT=20
+TELEGRAM_READ_TIMEOUT=20
+TELEGRAM_WRITE_TIMEOUT=20
+TELEGRAM_POOL_TIMEOUT=5
 CODEX_CMD=codex app-server --listen stdio://
 TIMEZONE=Asia/Shanghai
 CACHE_SECONDS=20
@@ -110,6 +115,8 @@ CHART_MAX_POINTS=300
 
 - `TELEGRAM_BOT_TOKEN`：BotFather 提供的 token。
 - `ALLOWED_CHAT_IDS`：允许访问的 Telegram chat_id；留空允许所有 chat。
+- `TELEGRAM_PROXY`：Telegram API 代理；网络无法直连 `api.telegram.org` 时可填 HTTP 代理，例如 `http://127.0.0.1:7890`。
+- `TELEGRAM_CONNECT_TIMEOUT` / `TELEGRAM_READ_TIMEOUT` / `TELEGRAM_WRITE_TIMEOUT` / `TELEGRAM_POOL_TIMEOUT`：Telegram API 连接/读写/连接池超时。
 - `CODEX_CMD`：Codex app-server 启动命令。
 - `TIMEZONE`：用于显示重置时间和每日报告时间。
 - `CACHE_SECONDS`：`/quota` 缓存秒数，避免频繁启动 Codex app-server。
@@ -291,6 +298,7 @@ CODEX_CMD=/home/you/.local/bin/codex app-server --listen stdio://
 
 ### Telegram Bot 没响应
 
+- 如果日志出现 `telegram.error.TimedOut`、`httpx.ConnectTimeout` 或 `Network is unreachable`，说明机器无法直连 Telegram API。请检查网络，或在 `.env` 配置 `TELEGRAM_PROXY=http://127.0.0.1:7890` 这类 HTTP 代理。
 - 检查 `TELEGRAM_BOT_TOKEN` 是否正确。
 - 检查 Bot 是否正在运行。
 - 如果配置了 `ALLOWED_CHAT_IDS`，确认当前 chat_id 在列表中；否则会回复 `无权限。`。
