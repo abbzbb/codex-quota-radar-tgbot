@@ -49,10 +49,11 @@ except Exception:  # Chart command will report a clear error if unavailable.
     plt = None  # type: ignore[assignment]
 
 try:
-    from telegram import Update
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
     from telegram.ext import (
         Application,
         ApplicationBuilder,
+        CallbackQueryHandler,
         CommandHandler,
         ContextTypes,
     )
@@ -60,6 +61,7 @@ except Exception:  # Allows import of RSS/DB helpers without PTB installed.
     Update = Any  # type: ignore[misc,assignment]
     Application = Any  # type: ignore[misc,assignment]
     ApplicationBuilder = None  # type: ignore[assignment]
+    CallbackQueryHandler = None  # type: ignore[assignment]
     CommandHandler = None  # type: ignore[assignment]
 
     class _ContextTypesFallback:
@@ -888,6 +890,79 @@ async def allowed(update: Update) -> bool:
     return False
 
 
+
+
+def main_keyboard() -> Optional[Any]:
+    if "InlineKeyboardMarkup" not in globals() or InlineKeyboardMarkup is None:
+        return None
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("📊 查询额度", callback_data="quota"),
+                InlineKeyboardButton("🔄 强制刷新", callback_data="refresh"),
+            ],
+            [
+                InlineKeyboardButton("📈 趋势图", callback_data="chart_menu"),
+                InlineKeyboardButton("🕘 历史", callback_data="history"),
+            ],
+            [
+                InlineKeyboardButton("🛰️ Radar", callback_data="radar"),
+                InlineKeyboardButton("🔎 检查更新", callback_data="radar_check"),
+            ],
+            [
+                InlineKeyboardButton("🩺 健康检查", callback_data="health"),
+                InlineKeyboardButton("❓ 帮助", callback_data="help"),
+            ],
+        ]
+    )
+
+
+def chart_keyboard() -> Optional[Any]:
+    if "InlineKeyboardMarkup" not in globals() or InlineKeyboardMarkup is None:
+        return None
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("24h", callback_data="chart:24h"),
+                InlineKeyboardButton("1d", callback_data="chart:1d"),
+                InlineKeyboardButton("7d", callback_data="chart:7d"),
+                InlineKeyboardButton("30d", callback_data="chart:30d"),
+            ],
+            [InlineKeyboardButton("⬅️ 返回", callback_data="menu")],
+        ]
+    )
+
+
+async def send_or_edit_text(update: Update, text: str, *, reply_markup: Optional[Any] = None, limit: int = 3900) -> None:
+    query = getattr(update, "callback_query", None)
+    if query:
+        parts = split_text(text, limit)
+        await query.edit_message_text(parts[0], reply_markup=reply_markup, disable_web_page_preview=True)
+        for part in parts[1:]:
+            await query.message.reply_text(part, disable_web_page_preview=True)
+    else:
+        if not getattr(update, "message", None):
+            return
+        parts = split_text(text, limit)
+        await update.message.reply_text(parts[0], reply_markup=reply_markup, disable_web_page_preview=True)
+        for part in parts[1:]:
+            await update.message.reply_text(part, disable_web_page_preview=True)
+
+
+async def allowed_interaction(update: Update) -> bool:
+    chat_id = get_chat_id(update)
+    if chat_id is None:
+        return False
+    if is_allowed_chat_id(chat_id):
+        return True
+    query = getattr(update, "callback_query", None)
+    if query:
+        await query.answer("无权限。", show_alert=True)
+    else:
+        await reply_text(update, "无权限。")
+    return False
+
+
 HELP_TEXT = """Codex Quota Radar Telegram Bot
 
 基础命令：
@@ -914,21 +989,13 @@ Codex Radar RSS：
 """
 
 
-async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await allowed(update):
-        return
-    await reply_text(update, "你好，我可以查询本机 Codex 额度并订阅 Codex Radar RSS 更新。\n\n" + HELP_TEXT)
+async def quota_text_for_chat(chat_id: int, *, force: bool = False) -> str:
+    payload = await fetch_codex_payload(force=force)
+    save_history(chat_id, payload)
+    return format_quota(payload)
 
 
-async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await allowed(update):
-        return
-    await reply_text(update, HELP_TEXT)
-
-
-async def health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await allowed(update):
-        return
+async def health_text() -> str:
     codex_ok = False
     email = plan = rate_ok = "未知"
     codex_error = ""
@@ -967,16 +1034,106 @@ async def health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         text += f"\nCodex 错误：{codex_error}"
     if radar_error:
         text += f"\nRSS 错误：{radar_error}"
-    await reply_text(update, text)
+    return text
+
+
+def history_text(chat_id: int) -> str:
+    rows = query_history(chat_id, 12)
+    if not rows:
+        return "暂无额度查询历史。"
+    lines = ["最近 12 条额度历史："]
+    for row in rows:
+        dt = datetime.fromtimestamp(int(row["ts"]), LOCAL_TZ).strftime("%Y-%m-%d %H:%M")
+        sec = percent_text(row.get("secondary_remaining")) if row.get("secondary_remaining") is not None else "无"
+        lines.append(f"{dt}｜短周期 {percent_text(row.get('primary_remaining'))}｜长周期 {sec}")
+    return "\n".join(lines)
+
+
+async def radar_latest_text() -> str:
+    items = await fetch_radar_feed_items()
+    if not items:
+        return "未读取到 Codex Radar RSS 条目。"
+    return "\n\n".join(format_radar_item(i) for i in items[:3])
+
+
+async def radar_check_text_for_chat(chat_id: int) -> str:
+    settings = get_radar_settings(chat_id)
+    items = await fetch_radar_feed_items()
+    new_items = new_radar_items_since(items, settings.get("last_seen_id"), 5)
+    if items:
+        update_radar_settings(chat_id, last_seen_id=item_id(items[0]), last_error=None)
+    if not new_items:
+        return "没有新的 Codex Radar RSS 更新"
+    return "\n\n".join(format_radar_item(item) for item in new_items)
+
+
+def chart_image_for_chat(chat_id: int, arg: str) -> tuple[Optional[io.BytesIO], str]:
+    if plt is None:
+        return None, "matplotlib 不可用，无法生成图表。"
+    seconds = chart_window_seconds(arg)
+    if seconds is None:
+        return None, "用法：/chart 24h|1d|7d|30d"
+    rows = query_history_since(chat_id, now_ts() - seconds)
+    if len(rows) < 2:
+        return None, "历史记录不足 2 条，暂时无法生成趋势图。"
+    rows = rows[-CHART_MAX_POINTS:]
+    xs = [datetime.fromtimestamp(int(r["ts"]), LOCAL_TZ) for r in rows]
+    primary = [r.get("primary_remaining") for r in rows]
+    secondary = [r.get("secondary_remaining") for r in rows]
+    configure_chart_fonts()
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Glyph .* missing from font")
+        fig, ax = plt.subplots(figsize=(9.5, 5.2), facecolor="#f8fafc")
+        ax.set_facecolor("#ffffff")
+        ax.plot(xs, primary, marker="o", markersize=4.5, linewidth=2.4, color="#2563eb", label="短周期剩余")
+        if any(v is not None for v in secondary):
+            ax.plot(xs, secondary, marker="o", markersize=4.5, linewidth=2.4, color="#16a34a", label="长周期剩余")
+        ax.axhspan(0, 20, color="#fee2e2", alpha=0.45, zorder=0)
+        ax.axhline(20, color="#ef4444", linewidth=1.1, linestyle="--", alpha=0.85, label="低额度参考线 20%")
+        ax.set_ylim(0, 100)
+        ax.set_ylabel("剩余百分比（%）")
+        ax.set_xlabel("查询时间")
+        ax.set_title(f"Codex 额度趋势（{arg}）", fontsize=15, pad=14, weight="bold")
+        ax.grid(True, axis="y", color="#cbd5e1", alpha=0.55, linewidth=0.8)
+        ax.grid(True, axis="x", color="#e2e8f0", alpha=0.35, linewidth=0.6)
+        for spine in ["top", "right"]:
+            ax.spines[spine].set_visible(False)
+        for spine in ["left", "bottom"]:
+            ax.spines[spine].set_color("#cbd5e1")
+        ax.legend(frameon=True, facecolor="#ffffff", edgecolor="#e2e8f0", framealpha=0.95)
+        _format_chart_xticks(fig, ax, arg)
+        ax.text(0.99, 0.02, f"数据点：{len(rows)} · 时区：{TIMEZONE_NAME}", transform=ax.transAxes, ha="right", va="bottom", fontsize=8.5, color="#64748b")
+        buf = io.BytesIO()
+        fig.tight_layout(pad=1.4)
+        fig.savefig(buf, format="png", dpi=170, facecolor=fig.get_facecolor(), bbox_inches="tight")
+        plt.close(fig)
+        buf.seek(0)
+    return buf, f"Codex 额度趋势（{arg}）"
+
+
+async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await allowed(update):
+        return
+    await send_or_edit_text(update, "你好，我可以查询本机 Codex 额度并订阅 Codex Radar RSS 更新。\n\n" + HELP_TEXT, reply_markup=main_keyboard())
+
+
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await allowed(update):
+        return
+    await send_or_edit_text(update, HELP_TEXT, reply_markup=main_keyboard())
+
+
+async def health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await allowed(update):
+        return
+    await reply_text(update, await health_text())
 
 
 async def quota_like_reply(update: Update, *, force: bool = False) -> None:
     chat_id = get_chat_id(update)
     assert chat_id is not None
     try:
-        payload = await fetch_codex_payload(force=force)
-        save_history(chat_id, payload)
-        await reply_text(update, format_quota(payload))
+        await reply_text(update, await quota_text_for_chat(chat_id, force=force))
     except Exception as exc:
         logger.exception("Quota query failed")
         await reply_text(update, f"Codex 额度查询失败：{sanitize_text(str(exc), 700)}")
@@ -1063,16 +1220,7 @@ async def daily_off_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def history_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await allowed(update):
         return
-    rows = query_history(int(get_chat_id(update)), 12)
-    if not rows:
-        await reply_text(update, "暂无额度查询历史。")
-        return
-    lines = ["最近 12 条额度历史："]
-    for row in rows:
-        dt = datetime.fromtimestamp(int(row["ts"]), LOCAL_TZ).strftime("%Y-%m-%d %H:%M")
-        sec = percent_text(row.get("secondary_remaining")) if row.get("secondary_remaining") is not None else "无"
-        lines.append(f"{dt}｜短周期 {percent_text(row.get('primary_remaining'))}｜长周期 {sec}")
-    await reply_text(update, "\n".join(lines))
+    await reply_text(update, history_text(int(get_chat_id(update))))
 
 
 def chart_window_seconds(arg: str) -> Optional[int]:
@@ -1125,74 +1273,20 @@ def _format_chart_xticks(fig: Any, ax: Any, window_arg: str) -> None:
 async def chart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await allowed(update):
         return
-    if plt is None:
-        await reply_text(update, "matplotlib 不可用，无法生成图表。")
-        return
     args = getattr(context, "args", []) or []
     arg = args[0] if args else "7d"
-    seconds = chart_window_seconds(arg)
-    if seconds is None:
-        await reply_text(update, "用法：/chart 24h|1d|7d|30d")
+    image, message = chart_image_for_chat(int(get_chat_id(update)), arg)
+    if image is None:
+        await reply_text(update, message)
         return
-    rows = query_history_since(int(get_chat_id(update)), now_ts() - seconds)
-    if len(rows) < 2:
-        await reply_text(update, "历史记录不足 2 条，暂时无法生成趋势图。")
-        return
-    rows = rows[-CHART_MAX_POINTS:]
-    xs = [datetime.fromtimestamp(int(r["ts"]), LOCAL_TZ) for r in rows]
-    primary = [r.get("primary_remaining") for r in rows]
-    secondary = [r.get("secondary_remaining") for r in rows]
-    font_prop = configure_chart_fonts()
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", message="Glyph .* missing from font")
-        fig, ax = plt.subplots(figsize=(9.5, 5.2), facecolor="#f8fafc")
-        ax.set_facecolor("#ffffff")
-        primary_color = "#2563eb"
-        secondary_color = "#16a34a"
-        ax.plot(xs, primary, marker="o", markersize=4.5, linewidth=2.4, color=primary_color, label="短周期剩余")
-        if any(v is not None for v in secondary):
-            ax.plot(xs, secondary, marker="o", markersize=4.5, linewidth=2.4, color=secondary_color, label="长周期剩余")
-        ax.axhspan(0, 20, color="#fee2e2", alpha=0.45, zorder=0)
-        ax.axhline(20, color="#ef4444", linewidth=1.1, linestyle="--", alpha=0.85, label="低额度参考线 20%")
-        ax.set_ylim(0, 100)
-        ax.set_ylabel("剩余百分比（%）")
-        ax.set_xlabel("查询时间")
-        ax.set_title(f"Codex 额度趋势（{arg}）", fontsize=15, pad=14, weight="bold")
-        ax.grid(True, axis="y", color="#cbd5e1", alpha=0.55, linewidth=0.8)
-        ax.grid(True, axis="x", color="#e2e8f0", alpha=0.35, linewidth=0.6)
-        for spine in ["top", "right"]:
-            ax.spines[spine].set_visible(False)
-        for spine in ["left", "bottom"]:
-            ax.spines[spine].set_color("#cbd5e1")
-        ax.legend(frameon=True, facecolor="#ffffff", edgecolor="#e2e8f0", framealpha=0.95)
-        _format_chart_xticks(fig, ax, arg)
-        ax.text(
-            0.99,
-            0.02,
-            f"数据点：{len(rows)} · 时区：{TIMEZONE_NAME}",
-            transform=ax.transAxes,
-            ha="right",
-            va="bottom",
-            fontsize=8.5,
-            color="#64748b",
-        )
-        buf = io.BytesIO()
-        fig.tight_layout(pad=1.4)
-        fig.savefig(buf, format="png", dpi=170, facecolor=fig.get_facecolor(), bbox_inches="tight")
-    plt.close(fig)
-    buf.seek(0)
-    await update.message.reply_photo(photo=buf, caption=f"Codex 额度趋势（{arg}）")
+    await update.message.reply_photo(photo=image, caption=message)
 
 
 async def radar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await allowed(update):
         return
     try:
-        items = await fetch_radar_feed_items()
-        if not items:
-            await reply_text(update, "未读取到 Codex Radar RSS 条目。")
-            return
-        await reply_text(update, "\n\n".join(format_radar_item(i) for i in items[:3]))
+        await reply_text(update, await radar_latest_text())
     except Exception as exc:
         await reply_text(update, f"RSS 读取失败：{sanitize_text(str(exc), 500)}")
 
@@ -1230,21 +1324,53 @@ async def radar_off_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def radar_check_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await allowed(update):
         return
-    chat_id = int(get_chat_id(update))
-    settings = get_radar_settings(chat_id)
     try:
-        items = await fetch_radar_feed_items()
-        new_items = new_radar_items_since(items, settings.get("last_seen_id"), 5)
-        if items:
-            update_radar_settings(chat_id, last_seen_id=item_id(items[0]), last_error=None)
-        if not new_items:
-            await reply_text(update, "没有新的 Codex Radar RSS 更新")
-            return
-        for item in new_items:
-            await reply_text(update, format_radar_item(item))
+        await reply_text(update, await radar_check_text_for_chat(int(get_chat_id(update))))
     except Exception as exc:
-        update_radar_settings(chat_id, last_error=sanitize_text(str(exc), 500))
+        update_radar_settings(int(get_chat_id(update)), last_error=sanitize_text(str(exc), 500))
         await reply_text(update, f"RSS 检查失败：{sanitize_text(str(exc), 500)}")
+
+
+async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if not query:
+        return
+    await query.answer()
+    if not await allowed_interaction(update):
+        return
+    chat_id = int(get_chat_id(update))
+    data = query.data or ""
+    try:
+        if data == "menu":
+            await send_or_edit_text(update, "请选择操作：", reply_markup=main_keyboard())
+        elif data == "help":
+            await send_or_edit_text(update, HELP_TEXT, reply_markup=main_keyboard())
+        elif data == "health":
+            await send_or_edit_text(update, await health_text(), reply_markup=main_keyboard())
+        elif data == "quota":
+            await send_or_edit_text(update, await quota_text_for_chat(chat_id, force=False), reply_markup=main_keyboard())
+        elif data == "refresh":
+            await send_or_edit_text(update, await quota_text_for_chat(chat_id, force=True), reply_markup=main_keyboard())
+        elif data == "history":
+            await send_or_edit_text(update, history_text(chat_id), reply_markup=main_keyboard())
+        elif data == "radar":
+            await send_or_edit_text(update, await radar_latest_text(), reply_markup=main_keyboard())
+        elif data == "radar_check":
+            await send_or_edit_text(update, await radar_check_text_for_chat(chat_id), reply_markup=main_keyboard())
+        elif data == "chart_menu":
+            await send_or_edit_text(update, "请选择图表时间范围：", reply_markup=chart_keyboard())
+        elif data.startswith("chart:"):
+            arg = data.split(":", 1)[1]
+            image, message = chart_image_for_chat(chat_id, arg)
+            if image is None:
+                await send_or_edit_text(update, message, reply_markup=chart_keyboard())
+            else:
+                await query.message.reply_photo(photo=image, caption=message, reply_markup=main_keyboard())
+        else:
+            await send_or_edit_text(update, "未知操作。", reply_markup=main_keyboard())
+    except Exception as exc:
+        logger.exception("Callback query failed: %s", data)
+        await send_or_edit_text(update, f"操作失败：{sanitize_text(str(exc), 700)}", reply_markup=main_keyboard())
 
 
 # ---------------------------------------------------------------------------
@@ -1344,7 +1470,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 def build_application() -> Application:
-    if ApplicationBuilder is None or CommandHandler is None:
+    if ApplicationBuilder is None or CommandHandler is None or CallbackQueryHandler is None:
         raise RuntimeError("python-telegram-bot 未安装，请先安装 requirements.txt")
     if not TELEGRAM_BOT_TOKEN:
         raise RuntimeError("TELEGRAM_BOT_TOKEN 未配置")
@@ -1383,6 +1509,7 @@ def build_application() -> Application:
     ]
     for command, callback in handlers:
         app.add_handler(CommandHandler(command, callback))
+    app.add_handler(CallbackQueryHandler(callback_query_handler))
     app.add_error_handler(error_handler)
     if app.job_queue is None:
         raise RuntimeError("JobQueue 不可用，请安装 python-telegram-bot[job-queue]")
