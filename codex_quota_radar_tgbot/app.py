@@ -16,7 +16,7 @@ from .handlers import (
     history_cmd, quota_cmd, radar_check_cmd, radar_cmd, radar_off_cmd, radar_watch_cmd,
     raw_cmd, refresh_cmd, start_cmd, watch_cmd, watch_off_cmd,
 )
-from .jobs import daily_report_job, quota_watch_job, radar_feed_job
+from .jobs import daily_report_job, error_handler, quota_watch_job, radar_feed_job
 
 
 def build_application() -> Application:
