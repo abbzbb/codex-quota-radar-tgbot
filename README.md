@@ -14,13 +14,23 @@
 
 ```text
 .
-├── bot.py                                      # Bot 主程序
-├── requirements.txt                           # Python 依赖
-├── .env.example                               # 环境变量示例
-├── README.md                                  # 使用说明
-├── .gitignore                                 # 忽略 .env/数据库/虚拟环境等
+├── bot.py                                      # 兼容入口，保留 from bot import ...
+├── codex_quota_radar_tgbot/                   # Bot 主包
+│   ├── app.py                                  # Application 构建和启动
+│   ├── config.py                               # 环境变量和日志配置
+│   ├── codex_rpc.py                            # Codex app-server JSON-RPC 客户端
+│   ├── db.py                                   # SQLite 表和辅助函数
+│   ├── rss.py                                  # RSS/Atom 拉取和解析
+│   ├── charts.py                               # matplotlib 趋势图
+│   ├── handlers.py                             # Telegram 命令和 inline keyboard
+│   ├── jobs.py                                 # 后台定时任务
+│   └── formatting.py                           # 展示、脱敏和文本工具
+├── requirements.txt                            # Python 依赖
+├── .env.example                                # 环境变量示例
+├── README.md                                   # 使用说明
+├── .gitignore                                  # 忽略 .env/数据库/虚拟环境等
 └── systemd/
-    └── codex-quota-radar-bot.service.example # systemd 服务示例
+    └── codex-quota-radar-bot.service.example  # systemd 服务示例
 ```
 
 ## 安装
