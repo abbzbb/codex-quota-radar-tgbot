@@ -6,8 +6,8 @@ from datetime import datetime
 
 from .telegram_compat import ContextTypes
 
-from .codex_rpc import fetch_codex_payload, format_quota, quota_alert_key
-from .config import LOCAL_TZ, logger
+from .codex_rpc import fetch_codex_payload, format_quota, get_cached_codex_payload, quota_alert_key
+from .config import LOCAL_TZ, WATCH_NOTIFY_ERRORS, logger
 from .db import (
     get_alert_enabled_chats, get_chat_settings, get_daily_enabled_chats, get_radar_enabled_chats,
     get_radar_settings, save_history, update_chat_settings, update_radar_settings,
@@ -23,17 +23,23 @@ async def quota_watch_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         payload = await fetch_codex_payload(force=True)
     except Exception as exc:
-        digest = hashlib.sha1(str(exc).encode("utf-8", errors="ignore")).hexdigest()[:8]
-        error_key = f"error:{datetime.now(LOCAL_TZ).date()}:{digest}"
-        for chat_id in chat_ids:
-            settings = get_chat_settings(chat_id)
-            if settings.get("last_alert_key") == error_key:
-                continue
-            update_chat_settings(chat_id, last_alert_key=error_key)
-            with contextlib.suppress(Exception):
-                await send_text_safe(context.bot, chat_id, f"Codex 额度后台检查失败：{sanitize_text(str(exc), 500)}")
-        logger.exception("quota_watch_job failed")
-        return
+        cached_payload = get_cached_codex_payload()
+        if cached_payload is not None:
+            payload = cached_payload
+            logger.warning("quota_watch_job using cached quota after refresh failure: %s", sanitize_text(str(exc), 500))
+        else:
+            logger.exception("quota_watch_job failed")
+            if WATCH_NOTIFY_ERRORS:
+                digest = hashlib.sha1(str(exc).encode("utf-8", errors="ignore")).hexdigest()[:8]
+                error_key = f"error:{datetime.now(LOCAL_TZ).date()}:{digest}"
+                for chat_id in chat_ids:
+                    settings = get_chat_settings(chat_id)
+                    if settings.get("last_alert_key") == error_key:
+                        continue
+                    update_chat_settings(chat_id, last_alert_key=error_key)
+                    with contextlib.suppress(Exception):
+                        await send_text_safe(context.bot, chat_id, f"Codex 额度后台检查失败：{sanitize_text(str(exc), 500)}")
+            return
 
     remaining = payload.get("tightest_remaining")
     if remaining is None:

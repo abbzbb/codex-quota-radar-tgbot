@@ -119,6 +119,7 @@ TIMEZONE=Asia/Shanghai
 CACHE_SECONDS=20
 DB_PATH=codex_quota_radar_bot.sqlite3
 CHECK_INTERVAL_MINUTES=15
+WATCH_NOTIFY_ERRORS=0
 ENABLE_RAW=0
 RADAR_FEED_URL=https://codexradar.com/feed.xml
 RADAR_CHECK_INTERVAL_MINUTES=3
@@ -139,6 +140,7 @@ CHART_MAX_POINTS=300
 - `CACHE_SECONDS`：`/quota` 缓存秒数，避免频繁启动 Codex app-server。
 - `DB_PATH`：SQLite 数据库路径。
 - `CHECK_INTERVAL_MINUTES`：低额度提醒后台检查间隔。
+- `WATCH_NOTIFY_ERRORS`：后台额度检查失败时是否推送错误到 Telegram；默认 `0`，避免 ChatGPT/Codex 上游网络波动刷屏。
 - `ENABLE_RAW`：设为 `1` 才允许 `/raw` 输出调试 JSON。
 - `RADAR_FEED_URL`：Codex Radar RSS feed 地址。
 - `RADAR_CHECK_INTERVAL_MINUTES`：RSS 后台检查间隔。
@@ -321,6 +323,10 @@ CODEX_CMD=/home/you/.local/bin/codex app-server --listen stdio://
 ### 未登录 Codex
 
 先在同一个用户下完成 Codex CLI 登录。Bot 不会读取 token/auth 文件；未登录时 JSON-RPC 调用可能失败。
+
+### 后台额度检查偶尔失败
+
+后台 `/watch` 定时任务会强制刷新 Codex rate limits。该接口依赖 Codex CLI 访问 `https://chatgpt.com/backend-api/wham/usage`，所以网络或 ChatGPT 上游波动时可能失败。默认情况下，后台任务会记录日志并优先使用最近缓存，不再向 Telegram 推送临时失败；如果你希望收到失败提醒，可设置 `WATCH_NOTIFY_ERRORS=1`。
 
 ### 读取不到 rate limits
 

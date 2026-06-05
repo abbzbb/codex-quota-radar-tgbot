@@ -16,6 +16,17 @@ _fetch_lock = asyncio.Lock()
 _cache: dict[str, Any] = {"ts": 0.0, "payload": None}
 
 
+def get_cached_codex_payload(max_age_seconds: Optional[int] = None) -> Optional[dict[str, Any]]:
+    payload = _cache.get("payload")
+    if payload is None:
+        return None
+    if max_age_seconds is not None:
+        age = time.time() - float(_cache.get("ts") or 0)
+        if age > max_age_seconds:
+            return None
+    return payload
+
+
 class CodexRPCError(RuntimeError):
     pass
 
