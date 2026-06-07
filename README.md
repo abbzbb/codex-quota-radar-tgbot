@@ -108,7 +108,9 @@ TELEGRAM_PROXY=
 TELEGRAM_CONNECT_TIMEOUT=20
 TELEGRAM_READ_TIMEOUT=20
 TELEGRAM_WRITE_TIMEOUT=20
-TELEGRAM_POOL_TIMEOUT=5
+TELEGRAM_POOL_TIMEOUT=30
+TELEGRAM_CONNECTION_POOL_SIZE=32
+TELEGRAM_GET_UPDATES_CONNECTION_POOL_SIZE=8
 CODEX_CMD=codex app-server --listen stdio://
 RPC_TIMEOUT_SECONDS=60
 HTTPS_PROXY=
@@ -132,7 +134,8 @@ CHART_MAX_POINTS=300
 - `TELEGRAM_BOT_TOKEN`：BotFather 提供的 token。
 - `ALLOWED_CHAT_IDS`：允许访问的 Telegram chat_id；留空允许所有 chat。
 - `TELEGRAM_PROXY`：Telegram API 代理；网络无法直连 `api.telegram.org` 时可填 HTTP 代理，例如 `http://127.0.0.1:7890`。
-- `TELEGRAM_CONNECT_TIMEOUT` / `TELEGRAM_READ_TIMEOUT` / `TELEGRAM_WRITE_TIMEOUT` / `TELEGRAM_POOL_TIMEOUT`：Telegram API 连接/读写/连接池超时。
+- `TELEGRAM_CONNECT_TIMEOUT` / `TELEGRAM_READ_TIMEOUT` / `TELEGRAM_WRITE_TIMEOUT` / `TELEGRAM_POOL_TIMEOUT`：Telegram API 连接/读写/等待空闲连接的超时。
+- `TELEGRAM_CONNECTION_POOL_SIZE` / `TELEGRAM_GET_UPDATES_CONNECTION_POOL_SIZE`：Telegram HTTP 连接池大小；代理慢、后台任务和用户命令并发时可适当调大。
 - `CODEX_CMD`：Codex app-server 启动命令。
 - `RPC_TIMEOUT_SECONDS`：等待 Codex JSON-RPC 单个响应的超时时间；`account/rateLimits/read` 偶尔较慢时可调大。
 - `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY`：Codex CLI 访问 `chatgpt.com` 失败时使用的网络代理；Bot 启动后会让子进程继承这些环境变量。
@@ -339,6 +342,7 @@ CODEX_CMD=/home/you/.local/bin/codex app-server --listen stdio://
 ### Telegram Bot 没响应
 
 - 如果日志出现 `telegram.error.TimedOut`、`httpx.ConnectTimeout` 或 `Network is unreachable`，说明机器无法直连 Telegram API。请检查网络，或在 `.env` 配置 `TELEGRAM_PROXY=http://127.0.0.1:7890` 这类 HTTP 代理。
+- 如果日志出现 `httpx.PoolTimeout` 或 `Pool timeout: All connections in the connection pool are occupied`，说明 Telegram HTTP 连接池里的连接都被占用，请优先检查代理是否卡住、是否启动了多个 bot 进程；也可以调大 `TELEGRAM_POOL_TIMEOUT=60`、`TELEGRAM_CONNECTION_POOL_SIZE=64` 后重启。
 - 检查 `TELEGRAM_BOT_TOKEN` 是否正确。
 - 检查 Bot 是否正在运行。
 - 如果配置了 `ALLOWED_CHAT_IDS`，确认当前 chat_id 在列表中；否则会回复 `无权限。`。

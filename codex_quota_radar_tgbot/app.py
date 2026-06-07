@@ -6,7 +6,8 @@ from .telegram_compat import Application, ApplicationBuilder, CallbackQueryHandl
 
 from .config import (
     ALLOWED_CHAT_IDS, CHECK_INTERVAL_MINUTES, DB_PATH, RADAR_CHECK_INTERVAL_MINUTES,
-    TELEGRAM_BOT_TOKEN, TELEGRAM_CONNECT_TIMEOUT, TELEGRAM_POOL_TIMEOUT, TELEGRAM_PROXY,
+    TELEGRAM_BOT_TOKEN, TELEGRAM_CONNECT_TIMEOUT, TELEGRAM_CONNECTION_POOL_SIZE,
+    TELEGRAM_GET_UPDATES_CONNECTION_POOL_SIZE, TELEGRAM_POOL_TIMEOUT, TELEGRAM_PROXY,
     TELEGRAM_READ_TIMEOUT, TELEGRAM_WRITE_TIMEOUT, TIMEZONE_NAME, logger,
 )
 from .db import init_db
@@ -31,10 +32,12 @@ def build_application() -> Application:
         .read_timeout(TELEGRAM_READ_TIMEOUT)
         .write_timeout(TELEGRAM_WRITE_TIMEOUT)
         .pool_timeout(TELEGRAM_POOL_TIMEOUT)
+        .connection_pool_size(TELEGRAM_CONNECTION_POOL_SIZE)
         .get_updates_connect_timeout(TELEGRAM_CONNECT_TIMEOUT)
         .get_updates_read_timeout(TELEGRAM_READ_TIMEOUT)
         .get_updates_write_timeout(TELEGRAM_WRITE_TIMEOUT)
         .get_updates_pool_timeout(TELEGRAM_POOL_TIMEOUT)
+        .get_updates_connection_pool_size(TELEGRAM_GET_UPDATES_CONNECTION_POOL_SIZE)
     )
     if TELEGRAM_PROXY:
         builder = builder.proxy(TELEGRAM_PROXY).get_updates_proxy(TELEGRAM_PROXY)
