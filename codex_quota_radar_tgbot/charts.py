@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .config import CHART_MAX_POINTS, LOCAL_TZ, TIMEZONE_NAME, logger
-from .db import query_history_since
+from .db import query_history_since, query_history_since_by_source
 from .formatting import now_ts
 
 try:
@@ -72,9 +72,14 @@ def chart_image_for_chat(chat_id: int, arg: str) -> tuple[Optional[io.BytesIO], 
     seconds = chart_window_seconds(arg)
     if seconds is None:
         return None, "用法：/chart 24h|1d|7d|30d"
-    rows = query_history_since(chat_id, now_ts() - seconds)
+    since_ts = now_ts() - seconds
+    rows = query_history_since_by_source(0, since_ts, "sample")
+    source_label = "均匀采样"
     if len(rows) < 2:
-        return None, "历史记录不足 2 条，暂时无法生成趋势图。"
+        rows = query_history_since(chat_id, since_ts)
+        source_label = "手动/旧历史回退"
+    if len(rows) < 2:
+        return None, "均匀采样历史不足 2 条，暂时无法生成趋势图。请等待后台采样，或先用旧历史回退。"
     rows = rows[-CHART_MAX_POINTS:]
     xs = [datetime.fromtimestamp(int(r["ts"]), LOCAL_TZ) for r in rows]
     primary = [r.get("primary_remaining") for r in rows]
@@ -91,7 +96,7 @@ def chart_image_for_chat(chat_id: int, arg: str) -> tuple[Optional[io.BytesIO], 
         ax.axhline(20, color="#ef4444", linewidth=1.1, linestyle="--", alpha=0.85, label="低额度参考线 20%")
         ax.set_ylim(0, 100)
         ax.set_ylabel("剩余百分比（%）")
-        ax.set_xlabel("查询时间")
+        ax.set_xlabel("采样时间" if source_label == "均匀采样" else "查询时间")
         ax.set_title(f"Codex 额度趋势（{arg}）", fontsize=15, pad=14, weight="bold")
         ax.grid(True, axis="y", color="#cbd5e1", alpha=0.55, linewidth=0.8)
         ax.grid(True, axis="x", color="#e2e8f0", alpha=0.35, linewidth=0.6)
@@ -104,7 +109,7 @@ def chart_image_for_chat(chat_id: int, arg: str) -> tuple[Optional[io.BytesIO], 
         ax.text(
             0.99,
             0.02,
-            f"数据点：{len(rows)} · 时区：{TIMEZONE_NAME}",
+            f"数据点：{len(rows)} · 数据源：{source_label} · 时区：{TIMEZONE_NAME}",
             transform=ax.transAxes,
             ha="right",
             va="bottom",
@@ -116,4 +121,4 @@ def chart_image_for_chat(chat_id: int, arg: str) -> tuple[Optional[io.BytesIO], 
         fig.savefig(buf, format="png", dpi=170, facecolor=fig.get_facecolor(), bbox_inches="tight")
         plt.close(fig)
         buf.seek(0)
-    return buf, f"Codex 额度趋势（{arg}）"
+    return buf, f"Codex 额度趋势（{arg}，{source_label}）"

@@ -4,6 +4,8 @@
 
 - 查询本机 Codex/ChatGPT 账号额度、已用百分比、重置时间、套餐类型和限制状态。
 - 订阅 [Codex Radar RSS](https://codexradar.com/feed.xml) 并向 Telegram 自动提醒。
+- 轮询 `https://codex-reset-radar.pages.dev/current.json`，将预测摘要、窗口状态、官方动态、OpenAI 状态事件、Model IQ 更新、额度校准去重转发到 Telegram 频道（默认 `@codex_radar`）。
+- 轮询 Sub2API 管理端支付订单列表，对订单支付成功、发放完成、失败、退款等状态变化发送 Telegram 通知。
 - 使用 SQLite 保存额度历史、提醒设置、每日报告设置和 RSS 状态。
 - 使用 `python-telegram-bot` JobQueue 执行低额度提醒、每日报告和 RSS 检查。
 - 使用 `matplotlib` 生成额度趋势图。
@@ -20,6 +22,8 @@
 │   ├── config.py                               # 环境变量和日志配置
 │   ├── codex_rpc.py                            # Codex app-server JSON-RPC 客户端
 │   ├── db.py                                   # SQLite 表和辅助函数
+│   ├── current_json.py                         # current.json 拉取、提取、格式化和去重 ID
+│   ├── sub2api_payment.py                      # Sub2API 支付订单拉取、格式化和事件 ID
 │   ├── rss.py                                  # RSS/Atom 拉取和解析
 │   ├── charts.py                               # matplotlib 趋势图
 │   ├── handlers.py                             # Telegram 命令和 inline keyboard
@@ -121,11 +125,29 @@ TIMEZONE=Asia/Shanghai
 CACHE_SECONDS=20
 DB_PATH=codex_quota_radar_bot.sqlite3
 CHECK_INTERVAL_MINUTES=15
+QUOTA_SAMPLE_INTERVAL_MINUTES=15
 WATCH_NOTIFY_ERRORS=0
 ENABLE_RAW=0
 RADAR_FEED_URL=https://codexradar.com/feed.xml
 RADAR_CHECK_INTERVAL_MINUTES=3
 RADAR_BOOTSTRAP_SILENT=1
+CURRENT_JSON_FORWARD_ENABLED=1
+CURRENT_JSON_URL=https://codex-reset-radar.pages.dev/current.json
+CURRENT_JSON_CHANNEL_ID=@codex_radar
+CURRENT_JSON_CHECK_INTERVAL_MINUTES=3
+CURRENT_JSON_BOOTSTRAP_SILENT=1
+CURRENT_JSON_MAX_ITEMS_PER_CHECK=5
+SUB2API_PAYMENT_NOTIFY_ENABLED=0
+SUB2API_BASE_URL=https://your-sub2api.example.com
+SUB2API_ADMIN_API_KEY=admin-your-64hex-api-key
+SUB2API_PAYMENT_ORDERS_PATH=/api/v1/admin/payment/orders
+SUB2API_PAYMENT_NOTIFY_CHAT_IDS=123456789
+SUB2API_PAYMENT_NOTIFY_STATUSES=PAID,COMPLETED,FAILED,REFUNDED
+SUB2API_PAYMENT_CHECK_INTERVAL_SECONDS=60
+SUB2API_PAYMENT_PAGE_SIZE=50
+SUB2API_PAYMENT_PAGES=1
+SUB2API_PAYMENT_REQUEST_TIMEOUT_SECONDS=15
+SUB2API_PAYMENT_BOOTSTRAP_SILENT=1
 CHART_MAX_POINTS=300
 ```
 
@@ -143,11 +165,28 @@ CHART_MAX_POINTS=300
 - `CACHE_SECONDS`：`/quota` 缓存秒数，避免频繁启动 Codex app-server。
 - `DB_PATH`：SQLite 数据库路径。
 - `CHECK_INTERVAL_MINUTES`：低额度提醒后台检查间隔。
+- `QUOTA_SAMPLE_INTERVAL_MINUTES`：后台均匀保存 Codex 额度快照的间隔；`/chart` 优先使用这些固定间隔样本绘图，避免手动查询时间不均匀造成趋势误导。
 - `WATCH_NOTIFY_ERRORS`：后台额度检查失败时是否推送错误到 Telegram；默认 `0`，避免 ChatGPT/Codex 上游网络波动刷屏。
 - `ENABLE_RAW`：设为 `1` 才允许 `/raw` 输出调试 JSON。
 - `RADAR_FEED_URL`：Codex Radar RSS feed 地址。
 - `RADAR_CHECK_INTERVAL_MINUTES`：RSS 后台检查间隔。
 - `RADAR_BOOTSTRAP_SILENT`：`1` 表示开启订阅时只记录最新项，不推送历史旧消息。
+- `CURRENT_JSON_FORWARD_ENABLED`：是否启用 `current.json` 到 Telegram 频道的后台转发。
+- `CURRENT_JSON_URL`：要轮询的 JSON 地址，默认 `https://codex-reset-radar.pages.dev/current.json`。
+- `CURRENT_JSON_CHANNEL_ID`：目标频道，默认 `@codex_radar`；Bot 必须是该频道管理员并有发消息权限。
+- `CURRENT_JSON_CHECK_INTERVAL_MINUTES`：`current.json` 检查间隔。
+- `CURRENT_JSON_BOOTSTRAP_SILENT`：`1` 表示第一次启动只记录当前已有条目，之后只转发新条目；设为 `0` 会在首次检查推送最多 `CURRENT_JSON_MAX_ITEMS_PER_CHECK` 条历史条目。
+- `CURRENT_JSON_MAX_ITEMS_PER_CHECK`：每次最多转发的新条目数，防止刷屏。
+- `SUB2API_PAYMENT_NOTIFY_ENABLED`：是否启用 Sub2API 支付订单通知。
+- `SUB2API_BASE_URL`：Sub2API 后端基础地址，例如 `https://sub2api.example.com`。
+- `SUB2API_ADMIN_API_KEY`：Sub2API Admin API Key，会通过 `x-api-key` 请求头访问管理端只读订单列表；不要发到群里或提交到仓库。
+- `SUB2API_PAYMENT_ORDERS_PATH`：管理端订单列表路径，默认 `/api/v1/admin/payment/orders`。
+- `SUB2API_PAYMENT_NOTIFY_CHAT_IDS`：接收支付订单通知的 Telegram chat_id；留空时回退使用 `ALLOWED_CHAT_IDS`。
+- `SUB2API_PAYMENT_NOTIFY_STATUSES`：要通知的订单状态，默认 `PAID,COMPLETED,FAILED,REFUNDED`。如需退款申请也提醒，可加入 `REFUND_REQUESTED,REFUNDING`。
+- `SUB2API_PAYMENT_CHECK_INTERVAL_SECONDS`：支付订单轮询间隔，单位秒。
+- `SUB2API_PAYMENT_PAGE_SIZE` / `SUB2API_PAYMENT_PAGES`：每轮拉取的订单页大小和页数。订单量很大时可提高页数，但注意不要过度请求。
+- `SUB2API_PAYMENT_REQUEST_TIMEOUT_SECONDS`：请求 Sub2API 的超时时间。
+- `SUB2API_PAYMENT_BOOTSTRAP_SILENT`：`1` 表示首次启动只记录当前已有订单状态，不推送历史旧订单；之后只通知新状态事件。
 - `CHART_MAX_POINTS`：趋势图最多绘制的历史点数。
 
 ## 启动
@@ -165,7 +204,7 @@ python bot.py
 
 - `/start`：显示 Bot 简介和命令列表。
 - `/help`：显示完整帮助。
-- `/health`：检查当前时间、时区、数据库路径、Codex 命令、Codex app-server 可调用性、账号邮箱/套餐/rate limits 可读性、Radar RSS 可读性。
+- `/health`：检查当前时间、时区、数据库路径、Codex 命令、Codex app-server 可调用性、账号邮箱/套餐/rate limits 可读性、Radar RSS 和 current.json 可读性。
 
 ### Codex 额度
 
@@ -177,7 +216,7 @@ python bot.py
 - `/daily 09:00`：开启每日额度报告，使用 `.env` 中的 `TIMEZONE`。
 - `/daily_off`：关闭每日额度报告。
 - `/history`：显示最近 12 条额度查询历史。
-- `/chart 24h`、`/chart 1d`、`/chart 7d`、`/chart 30d`：生成额度趋势图。
+- `/chart 24h`、`/chart 1d`、`/chart 7d`、`/chart 30d`：生成额度趋势图；优先使用后台按 `QUOTA_SAMPLE_INTERVAL_MINUTES` 均匀记录的全局样本，样本不足时才回退当前 chat 的旧历史。
 
 ### Codex Radar RSS
 
@@ -185,6 +224,38 @@ python bot.py
 - `/radar_watch`：开启当前 chat 的 RSS 自动提醒。
 - `/radar_check`：手动检查是否有新条目；最多推送最近 5 条，按旧到新顺序发送。
 - `/radar_off`：关闭当前 chat 的 RSS 自动提醒，不删除历史状态。
+
+### Codex Reset Radar 频道转发
+
+这部分没有 Telegram 命令，随 Bot 后台任务自动运行。启用 `CURRENT_JSON_FORWARD_ENABLED=1` 后，Bot 会按 `CURRENT_JSON_CHECK_INTERVAL_MINUTES` 轮询 `CURRENT_JSON_URL`，提取并去重转发到 `CURRENT_JSON_CHANNEL_ID`。当前会转发：
+
+- Codex reset 概率预测摘要（包括 low/none 状态）；
+- Codex reset/window 当前窗口状态（包括未开启/已关闭状态）；
+- 官方 Codex 动态；
+- OpenAI Status 事件；
+- Codex reset/card/window 确认信息；
+- Model IQ 更新；
+- `model_iq.quota_calibration` 额度校准结果。
+为防止重复和漏转，数据库会记录每条派生消息的 stable id，并额外记录按类别/标题/摘要归一化后的相似内容指纹；同类内容只发生百分比、日期、URL 或少量数字变化时不会重复转发。`current.json` 中的社区 reset/额度讨论（如 `complaint_examples`）只作为概率背景，不转发到频道。
+
+### Sub2API 支付订单通知
+
+这部分没有 Telegram 命令，随 Bot 后台任务自动运行。推荐使用 Sub2API 自带的支付/回调/发放流程处理真实支付，本 Bot 只通过管理端只读接口轮询订单状态并发通知：
+
+- 调用接口：`GET {SUB2API_BASE_URL}/api/v1/admin/payment/orders?page=1&page_size=...&status=...`
+- 认证方式：请求头 `x-api-key: ${SUB2API_ADMIN_API_KEY}`
+- 默认通知状态：`PAID`（已支付，等待发放）、`COMPLETED`（已完成）、`FAILED`（失败）、`REFUNDED`（已退款）。
+- 去重方式：SQLite 记录 `订单 ID + 状态` 事件，同一个订单同一状态只通知一次；从 `PAID` 变为 `COMPLETED` 会各通知一次。
+- 首次启动：默认 `SUB2API_PAYMENT_BOOTSTRAP_SILENT=1`，只标记当前已有订单，不把历史订单刷到 Telegram。
+
+最小配置示例：
+
+```env
+SUB2API_PAYMENT_NOTIFY_ENABLED=1
+SUB2API_BASE_URL=https://your-sub2api.example.com
+SUB2API_ADMIN_API_KEY=admin-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+SUB2API_PAYMENT_NOTIFY_CHAT_IDS=123456789
+```
 
 ## Inline Keyboard 快捷操作
 
@@ -255,6 +326,27 @@ async def main():
     print("items:", len(items))
     for item in items[:3]:
         print(item.get("title"), item.get("published"), item.get("link"))
+
+asyncio.run(main())
+PY
+```
+
+### current.json 解析测试
+
+```bash
+python - <<'PY'
+import asyncio
+from bot import fetch_current_json_items
+
+async def main():
+    items = await fetch_current_json_items()
+    print("items:", len(items))
+    counts = {}
+    for item in items:
+        counts[item.get("kind")] = counts.get(item.get("kind"), 0) + 1
+    print("counts:", counts)
+    for item in items[:3]:
+        print(item.get("kind"), item.get("title"), item.get("published"), item.get("url"))
 
 asyncio.run(main())
 PY
@@ -352,13 +444,20 @@ CODEX_CMD=/home/you/.local/bin/codex app-server --listen stdio://
 
 - 确认已安装 `matplotlib>=3.8.0`。
 - 本程序使用 `Agg` 后端，适合无图形界面的 systemd 环境。
-- 历史记录不足 2 条时无法画图，请先多执行几次 `/quota` 或等待每日/后台记录。
+- 均匀采样记录不足 2 条时无法画出可靠趋势；请等待后台采样至少两个周期。旧手动历史仍会作为临时回退。
 
-### RSS 读取失败
+### RSS 或 current.json 读取失败
 
-- 检查网络能否访问 `RADAR_FEED_URL`。
-- 确认 feed 返回 XML，而不是网页 HTML 或错误页。
+- 检查网络能否访问 `RADAR_FEED_URL` 和 `CURRENT_JSON_URL`。
+- 确认 RSS feed 返回 XML，`current.json` 返回 JSON，而不是网页 HTML 或错误页。
 - 后台任务失败不会退出 Bot，会记录 `last_error` 并写日志。
+
+### current.json 没有转发到频道
+
+- 确认 `CURRENT_JSON_FORWARD_ENABLED=1` 且 `CURRENT_JSON_CHANNEL_ID=@codex_radar`。
+- 确认 Bot 已加入 `@codex_radar` 并是管理员，具备发消息权限。
+- 默认 `CURRENT_JSON_BOOTSTRAP_SILENT=1`，首次启动只记录当前已有条目，不会回放历史；后续 JSON 出现新 stable id 且未命中相似内容指纹时才会转发。要测试历史推送，可临时设置为 `0` 或清理对应 `channel_forward_state`、`channel_forward_seen`、`channel_forward_fingerprints` 状态。
+- 查看日志中的 `current_json_channel_job fetch failed` 或 `current_json_channel_job send failed`。
 
 ### systemd 环境变量或路径问题
 

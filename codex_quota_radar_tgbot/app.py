@@ -5,7 +5,9 @@ import sys
 from .telegram_compat import Application, ApplicationBuilder, CallbackQueryHandler, CommandHandler, Update
 
 from .config import (
-    ALLOWED_CHAT_IDS, CHECK_INTERVAL_MINUTES, DB_PATH, RADAR_CHECK_INTERVAL_MINUTES,
+    CURRENT_JSON_CHECK_INTERVAL_MINUTES, CURRENT_JSON_CHANNEL_ID, CURRENT_JSON_FORWARD_ENABLED,
+    ALLOWED_CHAT_IDS, CHECK_INTERVAL_MINUTES, DB_PATH, QUOTA_SAMPLE_INTERVAL_MINUTES, RADAR_CHECK_INTERVAL_MINUTES,
+    SUB2API_PAYMENT_CHECK_INTERVAL_SECONDS, SUB2API_PAYMENT_NOTIFY_ENABLED,
     TELEGRAM_BOT_TOKEN, TELEGRAM_CONNECT_TIMEOUT, TELEGRAM_CONNECTION_POOL_SIZE,
     TELEGRAM_GET_UPDATES_CONNECTION_POOL_SIZE, TELEGRAM_POOL_TIMEOUT, TELEGRAM_PROXY,
     TELEGRAM_READ_TIMEOUT, TELEGRAM_WRITE_TIMEOUT, TIMEZONE_NAME, logger,
@@ -17,7 +19,10 @@ from .handlers import (
     history_cmd, quota_cmd, radar_check_cmd, radar_cmd, radar_off_cmd, radar_watch_cmd,
     raw_cmd, refresh_cmd, start_cmd, watch_cmd, watch_off_cmd,
 )
-from .jobs import daily_report_job, error_handler, quota_watch_job, radar_feed_job
+from .jobs import (
+    current_json_channel_job, daily_report_job, error_handler, quota_sample_job,
+    quota_watch_job, radar_feed_job, sub2api_payment_order_job,
+)
 
 
 def build_application() -> Application:
@@ -67,8 +72,21 @@ def build_application() -> Application:
     if app.job_queue is None:
         raise RuntimeError("JobQueue 不可用，请安装 python-telegram-bot[job-queue]")
     app.job_queue.run_repeating(quota_watch_job, interval=CHECK_INTERVAL_MINUTES * 60, first=10)
+    app.job_queue.run_repeating(quota_sample_job, interval=QUOTA_SAMPLE_INTERVAL_MINUTES * 60, first=30)
     app.job_queue.run_repeating(daily_report_job, interval=60, first=15)
     app.job_queue.run_repeating(radar_feed_job, interval=RADAR_CHECK_INTERVAL_MINUTES * 60, first=20)
+    if CURRENT_JSON_FORWARD_ENABLED and CURRENT_JSON_CHANNEL_ID:
+        app.job_queue.run_repeating(
+            current_json_channel_job,
+            interval=CURRENT_JSON_CHECK_INTERVAL_MINUTES * 60,
+            first=25,
+        )
+    if SUB2API_PAYMENT_NOTIFY_ENABLED:
+        app.job_queue.run_repeating(
+            sub2api_payment_order_job,
+            interval=SUB2API_PAYMENT_CHECK_INTERVAL_SECONDS,
+            first=35,
+        )
     return app
 
 

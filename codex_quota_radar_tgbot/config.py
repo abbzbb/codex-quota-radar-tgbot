@@ -24,7 +24,10 @@ APP_NAME = "codex_quota_radar_tgbot"
 APP_TITLE = "Codex Quota Radar Telegram Bot"
 APP_VERSION = "1.0.0"
 RADAR_USER_AGENT = "CodexQuotaRadarTgBot/1.0 (+Telegram RSS monitor)"
+CURRENT_JSON_USER_AGENT = "CodexQuotaRadarTgBot/1.0 (+Telegram current.json monitor)"
 DEFAULT_RADAR_FEED_URL = "https://codexradar.com/feed.xml"
+DEFAULT_CURRENT_JSON_URL = "https://codex-reset-radar.pages.dev/current.json"
+DEFAULT_SUB2API_PAYMENT_ORDERS_PATH = "/api/v1/admin/payment/orders"
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -83,10 +86,28 @@ TIMEZONE_NAME = _env_str("TIMEZONE", "Asia/Shanghai")
 CACHE_SECONDS = _env_int("CACHE_SECONDS", 20, minimum=0)
 DB_PATH = _env_str("DB_PATH", "codex_quota_radar_bot.sqlite3")
 CHECK_INTERVAL_MINUTES = _env_int("CHECK_INTERVAL_MINUTES", 15, minimum=1)
+QUOTA_SAMPLE_INTERVAL_MINUTES = _env_int("QUOTA_SAMPLE_INTERVAL_MINUTES", 15, minimum=1)
 ENABLE_RAW = _env_bool("ENABLE_RAW", False)
 RADAR_FEED_URL = _env_str("RADAR_FEED_URL", DEFAULT_RADAR_FEED_URL)
 RADAR_CHECK_INTERVAL_MINUTES = _env_int("RADAR_CHECK_INTERVAL_MINUTES", 3, minimum=1)
 RADAR_BOOTSTRAP_SILENT = _env_bool("RADAR_BOOTSTRAP_SILENT", True)
+CURRENT_JSON_FORWARD_ENABLED = _env_bool("CURRENT_JSON_FORWARD_ENABLED", True)
+CURRENT_JSON_URL = _env_str("CURRENT_JSON_URL", DEFAULT_CURRENT_JSON_URL)
+CURRENT_JSON_CHANNEL_ID = _env_str("CURRENT_JSON_CHANNEL_ID", "@codex_radar")
+CURRENT_JSON_CHECK_INTERVAL_MINUTES = _env_int("CURRENT_JSON_CHECK_INTERVAL_MINUTES", 3, minimum=1)
+CURRENT_JSON_BOOTSTRAP_SILENT = _env_bool("CURRENT_JSON_BOOTSTRAP_SILENT", True)
+CURRENT_JSON_MAX_ITEMS_PER_CHECK = _env_int("CURRENT_JSON_MAX_ITEMS_PER_CHECK", 5, minimum=1)
+SUB2API_PAYMENT_NOTIFY_ENABLED = _env_bool("SUB2API_PAYMENT_NOTIFY_ENABLED", False)
+SUB2API_BASE_URL = _env_str("SUB2API_BASE_URL", "")
+SUB2API_ADMIN_API_KEY = _env_str("SUB2API_ADMIN_API_KEY", "")
+SUB2API_PAYMENT_ORDERS_PATH = _env_str("SUB2API_PAYMENT_ORDERS_PATH", DEFAULT_SUB2API_PAYMENT_ORDERS_PATH)
+SUB2API_PAYMENT_NOTIFY_CHAT_IDS_RAW = os.getenv("SUB2API_PAYMENT_NOTIFY_CHAT_IDS", "")
+SUB2API_PAYMENT_CHECK_INTERVAL_SECONDS = _env_int("SUB2API_PAYMENT_CHECK_INTERVAL_SECONDS", 60, minimum=10)
+SUB2API_PAYMENT_PAGE_SIZE = _env_int("SUB2API_PAYMENT_PAGE_SIZE", 50, minimum=1)
+SUB2API_PAYMENT_PAGES = _env_int("SUB2API_PAYMENT_PAGES", 1, minimum=1)
+SUB2API_PAYMENT_REQUEST_TIMEOUT_SECONDS = _env_float("SUB2API_PAYMENT_REQUEST_TIMEOUT_SECONDS", 15.0)
+SUB2API_PAYMENT_BOOTSTRAP_SILENT = _env_bool("SUB2API_PAYMENT_BOOTSTRAP_SILENT", True)
+SUB2API_PAYMENT_NOTIFY_STATUSES_RAW = _env_str("SUB2API_PAYMENT_NOTIFY_STATUSES", "PAID,COMPLETED,FAILED,REFUNDED")
 CHART_MAX_POINTS = _env_int("CHART_MAX_POINTS", 300, minimum=2)
 RPC_TIMEOUT_SECONDS = _env_float("RPC_TIMEOUT_SECONDS", 60.0)
 TELEGRAM_PROXY = _env_str("TELEGRAM_PROXY", "")
@@ -99,7 +120,7 @@ TELEGRAM_GET_UPDATES_CONNECTION_POOL_SIZE = _env_int("TELEGRAM_GET_UPDATES_CONNE
 WATCH_NOTIFY_ERRORS = _env_bool("WATCH_NOTIFY_ERRORS", False)
 
 
-def _parse_allowed_chat_ids(raw: str) -> set[int]:
+def _parse_chat_ids(raw: str, *, env_name: str) -> set[int]:
     ids: set[int] = set()
     for token in raw.split(","):
         token = token.strip()
@@ -108,11 +129,29 @@ def _parse_allowed_chat_ids(raw: str) -> set[int]:
         try:
             ids.add(int(token))
         except ValueError:
-            logger.warning("Ignoring invalid ALLOWED_CHAT_IDS token: %r", token)
+            logger.warning("Ignoring invalid %s token: %r", env_name, token)
     return ids
 
 
+def _parse_upper_csv(raw: str) -> set[str]:
+    values: set[str] = set()
+    for token in raw.split(","):
+        value = token.strip().upper()
+        if value:
+            values.add(value)
+    return values
+
+
+def _parse_allowed_chat_ids(raw: str) -> set[int]:
+    return _parse_chat_ids(raw, env_name="ALLOWED_CHAT_IDS")
+
+
 ALLOWED_CHAT_IDS = _parse_allowed_chat_ids(ALLOWED_CHAT_IDS_RAW)
+SUB2API_PAYMENT_NOTIFY_CHAT_IDS = _parse_chat_ids(
+    SUB2API_PAYMENT_NOTIFY_CHAT_IDS_RAW,
+    env_name="SUB2API_PAYMENT_NOTIFY_CHAT_IDS",
+)
+SUB2API_PAYMENT_NOTIFY_STATUSES = _parse_upper_csv(SUB2API_PAYMENT_NOTIFY_STATUSES_RAW)
 
 
 def get_tz() -> timezone:

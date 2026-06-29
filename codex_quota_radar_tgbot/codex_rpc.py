@@ -291,7 +291,16 @@ async def quota_text_for_chat(chat_id: int, *, force: bool = False) -> str:
 
 
 async def health_text() -> str:
-    from .config import CODEX_CMD, DB_PATH, RADAR_FEED_URL, TIMEZONE_NAME
+    from .config import (
+        CODEX_CMD,
+        CURRENT_JSON_CHANNEL_ID,
+        CURRENT_JSON_FORWARD_ENABLED,
+        CURRENT_JSON_URL,
+        DB_PATH,
+        RADAR_FEED_URL,
+        TIMEZONE_NAME,
+    )
+    from .current_json import fetch_current_json_items
     from .rss import fetch_radar_feed_items
     from .formatting import local_now
 
@@ -316,6 +325,16 @@ async def health_text() -> str:
     except Exception as exc:
         radar_error = sanitize_text(str(exc), 400)
 
+    current_json_ok = False
+    current_json_error = ""
+    current_json_count = 0
+    try:
+        current_items = await fetch_current_json_items()
+        current_json_count = len(current_items)
+        current_json_ok = bool(current_items)
+    except Exception as exc:
+        current_json_error = sanitize_text(str(exc), 400)
+
     text = (
         "🩺 Bot 健康检查\n"
         f"当前时间：{local_now().strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
@@ -327,10 +346,15 @@ async def health_text() -> str:
         f"当前套餐类型：{plan}\n"
         f"是否读取到 rate limits：{rate_ok}\n"
         f"Radar RSS URL：{RADAR_FEED_URL}\n"
-        f"Radar RSS 可读取：{'是' if radar_ok else '否'}"
+        f"Radar RSS 可读取：{'是' if radar_ok else '否'}\n"
+        f"current.json URL：{CURRENT_JSON_URL}\n"
+        f"current.json 可读取：{'是' if current_json_ok else '否'}（可转发条目 {current_json_count}）\n"
+        f"current.json 频道转发：{'开启' if CURRENT_JSON_FORWARD_ENABLED else '关闭'} -> {CURRENT_JSON_CHANNEL_ID or '未配置'}"
     )
     if codex_error:
         text += f"\nCodex 错误：{codex_error}"
     if radar_error:
         text += f"\nRSS 错误：{radar_error}"
+    if current_json_error:
+        text += f"\ncurrent.json 错误：{current_json_error}"
     return text

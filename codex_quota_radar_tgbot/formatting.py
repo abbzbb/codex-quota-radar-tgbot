@@ -75,7 +75,7 @@ async def reply_text(update: Update, text: str, *, limit: int = 3900) -> None:
         await update.message.reply_text(part, disable_web_page_preview=True)
 
 
-async def send_text_safe(bot: Any, chat_id: int, text: str, *, limit: int = 3900) -> None:
+async def send_text_safe(bot: Any, chat_id: int | str, text: str, *, limit: int = 3900) -> None:
     for part in split_text(text, limit):
         await bot.send_message(chat_id=chat_id, text=part, disable_web_page_preview=True)
 
